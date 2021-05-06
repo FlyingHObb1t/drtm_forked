@@ -37,6 +37,10 @@
 #include <sys/sysinfo.h>
 
 #include "bench.h"
+
+// Tianxi: For the counters
+#include "../db/dbsstx.h"
+
 #if !NO_MYSQL
 //#include "mysql_wrapper.h"
 #endif
@@ -432,5 +436,13 @@ main(int argc, char **argv)
     argv[i] = (char *) bench_toks[i - 1].c_str();
   test_fn(argc, argv);
   delete db;
+
+  // Tianxi: Print the counters
+  printf("--------------- txn_delivery counters ---------------\n");
+  printf("get success:\t\t%u\n", get_success.load());
+  printf("get failure:\t\t%u\n", get_failure.load());
+  printf("getloc success:\t\t%u\n", getloc_success.load());
+  printf("getloc failure:\t\t%u\n", getloc_failure.load());
+
   return 0;
 }

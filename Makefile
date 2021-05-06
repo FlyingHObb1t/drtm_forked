@@ -1,11 +1,11 @@
-OPT ?= -O2 -g2 -DNDEBUG      # (A) Production use (optimized mode)
+#OPT ?= -O2 -g2 -DNDEBUG      # (A) Production use (optimized mode)
 #OPT ?= -O2 -g2 -DNDEBUG -funroll-all-loops
-#OPT ?= -g2              # (B) Debug mode, w/ full line-level debugging symbols
+OPT ?= -O0 -g2              # (B) Debug mode, w/ full line-level debugging symbols
 #OPT ?= -O2 -fno-omit-frame-pointer -g2 -DNDEBUG # (C) Profiling mode: opt, but w/debugging symbols
 #-----------------------------------------------
 
-CC=gcc-4.8
-CXX=g++-4.8
+CC=gcc
+CXX=g++
 
 CHOP=$(strip $(C))
 
@@ -16,7 +16,7 @@ $(shell CC=$(CC) CXX=$(CXX) TARGET_OS=$(TARGET_OS) CHOP=$(CHOP)\
 include build_config.mk
 
 CFLAGS += -I. -I./include $(PLATFORM_CCFLAGS) $(OPT)
-CXXFLAGS += -I. -I./include $(PLATFORM_CXXFLAGS) $(OPT)  -std=c++0x
+CXXFLAGS += -I. -I./include -I/home/luxi/drtm/cppzmq-4.7.1 -I/home/luxi/drtm/zeromq-4.3.4/include $(PLATFORM_CXXFLAGS) $(OPT)  -std=c++0x
 
 LDFLAGS += $(PLATFORM_LDFLAGS)
 LIBS += $(PLATFORM_LIBS)

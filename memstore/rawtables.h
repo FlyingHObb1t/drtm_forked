@@ -86,6 +86,7 @@
 extern size_t total_partition;
 extern size_t current_partition;
 extern size_t nthreads;
+extern double scale_factor;
 
 class RAWTables {
 
@@ -152,7 +153,8 @@ class RAWTables {
 
   RAWTables(int thrs,int bench = BENCH_TPCC){
     //init locks
-    int lock_size = nthreads * total_partition;//TODO
+//    int lock_size = nthreads * total_partition;//TODO
+    int lock_size = nthreads > scale_factor ? nthreads * total_partition : scale_factor * total_partition;
     payment_lock  = new SpinLock[lock_size];
     neworder_lock = new SpinLock[lock_size];
     cache_lock    = new SpinLock[lock_size];

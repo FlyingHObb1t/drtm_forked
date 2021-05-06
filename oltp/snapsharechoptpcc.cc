@@ -69,6 +69,8 @@
 #include "db/network_node.h"
 #include "memstore/rdma_resource.h"
 
+#include <atomic>
+
 using namespace std;
 using namespace util;
 //using namespace leveldb;
@@ -2206,7 +2208,11 @@ tpcc_worker::txn_new_order()
   return txn_result(b, ret);
 }
 
-
+// Tianxi: init the counters declared externally in dbsstx.h
+std::atomic<uint32_t> get_success(0);
+std::atomic<uint32_t> get_failure(0);
+std::atomic<uint32_t> getloc_success(0);
+std::atomic<uint32_t> getloc_failure(0);
 
 tpcc_worker::txn_result
 tpcc_worker::txn_delivery()
@@ -2233,9 +2239,11 @@ tpcc_worker::txn_delivery()
    //STEP 1. delete record with minimal o_id from NEWORDER
 
    //XXX: remove the opt in silo masstree?
+
+   // Get start and end (key?) for 10 districts
   for (uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
 
-    //	 starts[d - 1] = makeNewOrderKey(warehouse_id, d,1);
+//    	 starts[d - 1] = makeNewOrderKey(warehouse_id, d,1);
     starts[d - 1] = makeNewOrderKey(warehouse_id, d, last_no_o_ids[d - 1]);
     ends[d - 1] = makeNewOrderKey(warehouse_id, d, numeric_limits<int32_t>::max());
     no_o_ids[d - 1] = -1;
@@ -2259,6 +2267,7 @@ tpcc_worker::txn_delivery()
 
   register char nested = _xtest();
 
+  // Get the new order id for each district (total 10)
   for (register uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
     iter->Seek(starts[d-1]);
 
@@ -2292,7 +2301,18 @@ tpcc_worker::txn_delivery()
     //STEP 2. read o_c_id and update o_carriere_id  of ORDER
     uint64_t o_key = makeOrderKey(warehouse_id, d, no_o_ids[d - 1]);
     uint64_t* o_value;
-    sstx.Get(ORDE, o_key, &o_value, true);
+    bool ret = sstx.Get(ORDE, o_key, &o_value, true);
+
+    // Tianxi: If scale_factor <= nthreads, this will not be printed.
+    // Tianxi: Even in a setting nthreads = 1 and scale_factor = 2, true are the most cases.
+    if (!ret) {
+//        printf("tpcc_worker::txn_delivery, sstx.Get() return false\n");
+        get_failure++;
+        continue;
+    } else {
+//        printf("tpcc_worker::txn_delivery, sstx.Get() return true\n");
+        get_success++;
+    }
 
     assert(o_value);
     oorder::value *v_oo = (oorder::value *)o_value;
@@ -2301,7 +2321,7 @@ tpcc_worker::txn_delivery()
     if(v_oo->o_carrier_id != 0) {
       fprintf(stderr,"id: %d\n",v_oo->o_carrier_id);
     }
-    assert(v_oo->o_carrier_id == 0);
+//    assert(v_oo->o_carrier_id == 0);
 
 
     v_oo->o_carrier_id = o_carrier_id;
@@ -2366,7 +2386,11 @@ tpcc_worker::txn_delivery()
   for (register uint d = 1; d <= NumDistrictsPerWarehouse(); d++) {
 
     uint64_t c_key = makeCustomerKey(warehouse_id, d, c_ids[d - 1]);
-    sstx.GetLoc(CUST, c_key, &c_value_loc[d-1]);
+    bool ret = sstx.GetLoc(CUST, c_key, &c_value_loc[d-1]);
+    if (!ret) {
+//        printf("tpcc_worker::txn_delivery, sstx.GetLoc() return false\n");
+        c_value_loc[d-1] = 0;
+    }
   }
 
 
@@ -2378,6 +2402,13 @@ tpcc_worker::txn_delivery()
     customer::value *cv;
 
     uint64_t c_key = makeCustomerKey(warehouse_id, d, c_ids[d - 1]);
+    // Tianxi: skip
+    if (c_value_loc[d-1] == 0) {
+        getloc_failure++;
+        continue;
+    } else {
+        getloc_success++;
+    }
     c_value = (uint64_t *)((uint64_t)c_value_loc[d-1]+VALUE_OFFSET);
 
     cv = (customer::value *)c_value;
@@ -2421,9 +2452,11 @@ tpcc_worker::txn_payment()
   if (likely(g_disable_xpartition_txn ||
              NumWarehouses() == 1 ||
              RandomNumber(r, 1, 100) <= 85)) {
+      // Local warehouse
     districtID = customerDistrictID;
     warehouse_id = customerWarehouseID;
   } else {
+      // Remote warehouse (or local?)
     warehouse_id = RandomNumber(r,1,NumWarehouses());
     districtID   = RandomNumber(r, 1, NumDistrictsPerWarehouse());
   }
@@ -2443,6 +2476,8 @@ tpcc_worker::txn_payment()
   //STEP 3. update record of CUSTORMER
   uint64_t c_key;
   customer::value *v_c;
+
+  // Get c_key with the following if block
   if (RandomNumber(r, 1, 100) <= 60) {
 
     // 3.1 search with C_LAST name
@@ -2456,18 +2491,20 @@ tpcc_worker::txn_payment()
 
     string clast;
     clast.assign((const char *) lastname_buf, 16);
+    // Get two indexes
     uint64_t c_start = makeCustomerIndex(customerWarehouseID, customerDistrictID, clast, zeros);
     uint64_t c_end = makeCustomerIndex(customerWarehouseID, customerDistrictID, clast, ones);
 
+    // Get iterator in the customer table
     DBSSTX::Iterator* iter = sstx.GetIterator(CUST_INDEX);
 
+    // Seek to c_start
     iter->Seek(c_start);
 
     uint64_t c_keys[100];
     int j = 0;
 
     while (iter->Valid()) {
-
       if (compareCustomerIndex(iter->Key(), c_end)){
 
 
@@ -3517,9 +3554,12 @@ protected:
 
       for (size_t i = 0; i < nthreads; i++){
         ret.push_back(
-          new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
-            current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 1,
-			   current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 2, store, rdma));
+//          new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+//            current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 1,
+//			   current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 2, store, rdma));
+                new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + 1,
+                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + NumWarehousePerPartition() + 1, store, rdma));
       }
     ret.push_back(listener);
     return ret;

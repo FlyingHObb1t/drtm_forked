@@ -612,9 +612,9 @@ namespace drtm {
     }
 #endif
     if(!hit){
-#if USING_CHAIN_HASH
+#if USING_CHAIN_HASH        // false
     chain_travel(item);
-#elif USING_HASH_EXT
+#elif USING_HASH_EXT        // true
     hashext_travel(item);
 #else
     cuckoo_travel(item);
@@ -630,6 +630,7 @@ namespace drtm {
 #endif
 
     uint64_t index;
+    // lock is unset in tpcc_worker::txn_payment
     uint64_t loc  = item.loc;
     uint64_t *local_buffer = (uint64_t *)rdma->GetMsgAddr(thread_id);
     int ret;
@@ -640,11 +641,12 @@ namespace drtm {
       count++;
       if(count==50000){
 	//magic number to avoid dead loop
-        printf("Lock: %d,%d %lld, %llu %d\n",thread_id,key,*local_buffer, init_flag,pid);
+        printf("Lock: %d,%d %lld, %llu %d %d\n",thread_id,key,*local_buffer, init_flag,pid, hit);
         //PrintAllLocks();
       }
       if(count==500000){
-        exit(0);
+          printf("Lock: %d,%d %lld, %llu %d %d\n",thread_id,key,*local_buffer, init_flag,pid, hit);
+//          exit(0);
       }
       int ret;
       ret = rdma->RdmaCmpSwap(thread_id,pid,(char *)local_buffer, init_flag, (1UL << 63),sizeof(uint64_t),loc + TIME_OFFSET);

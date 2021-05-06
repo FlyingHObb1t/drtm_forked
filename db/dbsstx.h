@@ -51,6 +51,12 @@
 #include <map>
 #include <vector>
 
+// Tianxi: counter to failed and successful delivery transactions
+#include <atomic>
+extern std::atomic<uint32_t> get_success;
+extern std::atomic<uint32_t> get_failure;
+extern std::atomic<uint32_t> getloc_success;
+extern std::atomic<uint32_t> getloc_failure;
 
 #define _DB_RDMA
 
