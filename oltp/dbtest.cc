@@ -81,7 +81,6 @@ parse_memory_spec(const string &s)
 #endif
 
 int main(int argc, char **argv) {
-    LOG(INFO) << "dbtest main";
     abstract_db *db = NULL;
     void (*test_fn)(int argc, char **argv) = NULL;
     string bench_type = "ycsb";
@@ -101,7 +100,6 @@ int main(int argc, char **argv) {
     vector <vector<unsigned>> assignments;
     string stats_server_sockfile;
     while (1) {
-        LOG(INFO) << "dead loop";
         static struct option long_options[] =
                 {
                         {"verbose",                      no_argument,       &verbose,                     1},
@@ -228,7 +226,6 @@ int main(int argc, char **argv) {
                 abort();
         }
     }
-    LOG(INFO) << "After loop";
 
     if (bench_type == "tpcc")
         test_fn = tpcc_do_test;
@@ -431,14 +428,8 @@ int main(int argc, char **argv) {
       thread(&stats_server::serve_forever, srvr).detach();
     }
 #endif
+    // Split cmd arg value of option '--bench-opts'. For example, --bench-opts "--w 45,43,4,4,4 -r 1"
     vector <string> bench_toks = split_ws(bench_opts);
-    std::stringstream ss;
-    for (string tok: bench_toks) {
-        ss << tok << " ";
-    }
-    LOG(INFO) << "split bench tokens=" << ss.str();
-    ss.str("");
-
     int argc = 1 + bench_toks.size();
     char *argv[argc];
     argv[0] = (char *) bench_type.c_str();
