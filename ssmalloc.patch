@@ -1,0 +1,13 @@
+diff --git a/ssmalloc.c b/ssmalloc.c
+index df79a89..367e35a 100644
+--- a/ssmalloc.c
++++ b/ssmalloc.c
+@@ -737,7 +737,7 @@ void *realloc(void* ptr, size_t size)
+     }
+ }
+ 
+-void *calloc(size_t nmemb, size_t size)
++void __attribute((optimize("O0"))) *calloc(size_t nmemb, size_t size)
+ {
+     void *ptr;
+     ptr = malloc(nmemb * size);
