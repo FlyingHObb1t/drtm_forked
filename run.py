@@ -17,7 +17,7 @@ machine_mapping = {
 sent_map = {}
 
 start_id = 0
-target_dir = ""
+target_dir = "/users/PES0781/frankli/git/drtm"
 timeout    = 20 ##20 seconds
 #num_threads = 8
 num_threads = 10
@@ -26,10 +26,10 @@ opt_per_worker = 1000000
 distributed_rate = 20
 ratio = 1
 
-
-f = "dafault.txt"
 f = "scalability_config"
 f = "config_file"
+f = "hostfile"
+
 
 prev_par    = -1
 cur_machine = ""
@@ -46,7 +46,9 @@ def start_server(id):
 
     #tpcc no logging
 
-    base_cmd = """ cd ~/%s; ./dbtest --bench tpcc --db-type ndb-proto2 --num-threads %d --scale-factor %d --txn-flags 1 --ops-per-worker %d --bench-opts "--w 45,43,4,4,4 -r %d" --verbose --retry-aborted-transactions --total-partition %d --current-partition %d --config   %s 1>/dev/null 2>&1 &""" % (target_dir,num_threads,num_threads,opt_per_worker,ratio,len(machine_mapping),i,f)
+
+    base_cmd = """ mkdir -p /tmp/drtm ; cd %s; ./dbtest --bench tpcc --db-type ndb-proto2 --num-threads %d --scale-factor %d --txn-flags 1 --ops-per-worker %d --bench-opts "--w 45,43,4,4,4 -r %d" --verbose --retry-aborted-transactions --total-partition %d --current-partition %d --config   %s 1>/tmp/drtm/log 2>&1 &""" % (target_dir,num_threads,num_threads,opt_per_worker,ratio,len(machine_mapping),i,f)
+
 
 ##small bank cmd without logging
 #    base_cmd = """ cd ~/%s;nohup ./dbtest --bench bank --db-type ndb-proto2 --num-threads %d --scale-factor %d --txn-flags 1 --ops-per-worker %d --bench-opts "--w 25,15,15,15,15,15 -r 1" --verbose  --total-partition %d --current-partition %d --config  %s 1>/dev/null 2>&1 &""" % (target_dir,num_threads,num_threads,opt_per_worker,len(machine_mapping),i,f)
@@ -136,19 +138,22 @@ for i in machine_mapping.keys() :
         start_server((i,))
         pass
 exit()
-cur = 1
-while cur < len(machine_mapping):
-    end_par = cur
-    while machine_mapping[end_par] == machine_mapping[cur]:
-        end_par += 1
-        if end_par  >= len(machine_mapping):
-            break
 
-    base_cmd = """ cd ~/%s;./start_server.py %d %d %d %d %s""" % (target_dir,cur,end_par-1,num_threads,len(machine_mapping),f)
-    print base_cmd
-    subprocess.call(["ssh","-n","-f",machine_mapping[cur],base_cmd])
-    
-    cur = end_par
+
+
+# cur = 1
+# while cur < len(machine_mapping):
+#     end_par = cur
+#     while machine_mapping[end_par] == machine_mapping[cur]:
+#         end_par += 1
+#         if end_par  >= len(machine_mapping):
+#             break
+#
+#     base_cmd = """ cd ~/%s;./start_server.py %d %d %d %d %s""" % (target_dir,cur,end_par-1,num_threads,len(machine_mapping),f)
+#     print base_cmd
+#     subprocess.call(["ssh","-n","-f",machine_mapping[cur],base_cmd])
+#
+#     cur = end_par
 
 #start_server((0,))
 print "start_all_server except master done"
