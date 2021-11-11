@@ -1,0 +1,339 @@
+diff --git a/Makefile b/Makefile
+index 1135b4f..3e0eb2f 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1,6 +1,6 @@
+-#OPT ?= -O2 -g2 -DNDEBUG      # (A) Production use (optimized mode)
++OPT ?= -O2 -g2 -DNDEBUG      # (A) Production use (optimized mode)
+ #OPT ?= -O2 -g2 -DNDEBUG -funroll-all-loops
+-OPT ?= -O0 -g2              # (B) Debug mode, w/ full line-level debugging symbols
++#OPT ?= -O0 -g2              # (B) Debug mode, w/ full line-level debugging symbols
+ #OPT ?= -O2 -fno-omit-frame-pointer -g2 -DNDEBUG # (C) Profiling mode: opt, but w/debugging symbols
+ #-----------------------------------------------
+ 
+diff --git a/build_detect_platform b/build_detect_platform
+index b554a17..c47e741 100755
+--- a/build_detect_platform
++++ b/build_detect_platform
+@@ -194,7 +194,7 @@ fi
+ 
+ PLATFORM_CCFLAGS="-I/usr/local/ofed/include $PLATFORM_CCFLAGS $COMMON_FLAGS"
+ PLATFORM_CXXFLAGS="-I/usr/local/ofed/include $PLATFORM_CXXFLAGS $COMMON_FLAGS"
+-PLATFORM_LDFLAGS="$PLATFORM_LDFLAGS -L/usr/local/ofed/lib64 -L/usr/local/ofed/lib"
++PLATFORM_LDFLAGS="$PLATFORM_LDFLAGS -L/usr/local/ofed/lib64 -L/usr/local/ofed/lib -L."
+ echo "CC=$CC" >> $OUTPUT
+ echo "CXX=$CXX" >> $OUTPUT
+ echo "PLATFORM=$PLATFORM" >> $OUTPUT
+diff --git a/db/dbsstx.cc b/db/dbsstx.cc
+index 364bdbd..70adb7f 100755
+--- a/db/dbsstx.cc
++++ b/db/dbsstx.cc
+@@ -640,12 +640,13 @@ namespace drtm {
+     while(1){
+       count++;
+       if(count==50000){
+-	//magic number to avoid dead loop
++	    //magic number to avoid dead loop
+         printf("Lock: %d,%d %lld, %llu %d %d\n",thread_id,key,*local_buffer, init_flag,pid, hit);
+         //PrintAllLocks();
+       }
+       if(count==500000){
+           printf("Lock: %d,%d %lld, %llu %d %d\n",thread_id,key,*local_buffer, init_flag,pid, hit);
++          abort();
+ //          exit(0);
+       }
+       int ret;
+diff --git a/db/dbsstx.h b/db/dbsstx.h
+index 43e1e75..bd8f936 100755
+--- a/db/dbsstx.h
++++ b/db/dbsstx.h
+@@ -60,9 +60,12 @@ extern std::atomic<uint32_t> getloc_failure;
+ 
+ #define _DB_RDMA
+ 
+-#define DEFAULT_INTERVAL 400000   // 0.4ms
+-#define DELTA 200000 // 0.2ms
++//#define DEFAULT_INTERVAL 400000   // 0.4ms
++//#define DELTA 200000 // 0.2ms
+ 
++/* fix DrTM's timestamp bug */
++#define DEFAULT_INTERVAL 200000   // 0.4ms
++#define DELTA 100000 // 0.2ms
+ 
+ #define LOG_SIZE (10 * 1024) //10k for log size
+ 
+@@ -123,9 +126,13 @@ namespace drtm {
+ 
+     bool release_flag = false;//flag when can free all the remote lock,so it will write back and free memory space
+ 
+-    void DBSSTX::chain_travel(rwset_item &item);
+-    void DBSSTX::hashext_travel(rwset_item &item);
+-    void DBSSTX::cuckoo_travel(rwset_item &item);
++//    void DBSSTX::chain_travel(rwset_item &item);
++//    void DBSSTX::hashext_travel(rwset_item &item);
++//    void DBSSTX::cuckoo_travel(rwset_item &item);
++
++    void chain_travel(rwset_item &item);
++    void hashext_travel(rwset_item &item);
++    void cuckoo_travel(rwset_item &item);
+ 
+     //void PrintAllLocks();
+     //Rdma methods
+diff --git a/db/network_node.h b/db/network_node.h
+index bc930b1..d8f2956 100644
+--- a/db/network_node.h
++++ b/db/network_node.h
+@@ -58,7 +58,7 @@ public:
+ 
+  Network_Node(int _pid,int _nid,std::string &conf):nid(_nid),pid(_pid),context(1){
+ 
+-    fprintf(stdout,"start %d %d listening...\n",_pid,_nid);
++    fprintf(stdout,"%s, start listening, partition id=%d, #worker=%d ...\n", __FILE__, _pid, _nid);
+     std::ifstream ist (conf);
+     if(ist.is_open()) {
+       //      fprintf(stdout,"using config: %s\n",conf.c_str());
+diff --git a/memstore/rawtables.h b/memstore/rawtables.h
+index 342e1e7..a54d293 100755
+--- a/memstore/rawtables.h
++++ b/memstore/rawtables.h
+@@ -184,6 +184,16 @@ class RAWTables {
+     //
+     rdma_size = 1024 * 1024 * 1024;
+     rdma_size = rdma_size * 4; //4G
++
++    // assume each warehouse will consume at most 64MB for these three hash tables
++    uint64_t size_per_warehouse = 1024 * 1024 * 64;
++    // allocate an extra 100MB for posting RDMA one-sided messages
++    uint64_t rdma_msg_size = 1024 * 1024 * 100;
++    uint64_t total_rdma_size = scale_factor * size_per_warehouse + rdma_msg_size;
++
++    if (total_rdma_size > rdma_size)
++        rdma_size = total_rdma_size;
++
+     start_rdma = (char *)malloc(rdma_size);
+     end_rdma = start_rdma;
+ 
+@@ -202,6 +212,15 @@ class RAWTables {
+       rdmatablesize[WARE]=1024*10;
+       rdmatablesize[DIST]=1024*100;
+ 
++#define MAX(a,b) ({          \
++    __typeof__ (a) _a = (a); \
++    __typeof__ (b) _b = (b); \
++    _a > _b ? _a : _b; })
++
++      rdmatablesize[WARE] = MAX(rdmatablesize[WARE], scale_factor * 2);
++      rdmatablesize[DIST] = MAX(rdmatablesize[DIST], scale_factor * 10 * 2);
++      rdmatablesize[STOC] = MAX(rdmatablesize[STOC], scale_factor * 100000 * 2);
++
+       break;
+     case BENCH_BANK:
+       fprintf(stdout,"init bank tables\n");
+diff --git a/memstore/rdma_chainhash.h b/memstore/rdma_chainhash.h
+index d51bfb5..3069f9a 100755
+--- a/memstore/rdma_chainhash.h
++++ b/memstore/rdma_chainhash.h
+@@ -38,7 +38,7 @@
+ #define HASH_LOCK 0
+ 
+ //paddings for RDMA,may not be needed
+-#define MAX_THREADS    16
++#define MAX_THREADS    128
+ 
+ namespace drtm {
+ 
+diff --git a/memstore/rdma_hashext.h b/memstore/rdma_hashext.h
+index 84e0c49..ed6c175 100755
+--- a/memstore/rdma_hashext.h
++++ b/memstore/rdma_hashext.h
+@@ -38,7 +38,7 @@
+ #define HASH_LOCK 0
+ 
+ //paddings for RDMA,may not be needed
+-#define MAX_THREADS    16
++#define MAX_THREADS    128
+ 
+ #define CLUSTER_H    8
+ 
+@@ -58,16 +58,16 @@ namespace drtm {
+     };
+     char * array;
+     int length;
+-    int Logical_length;
+-    int indirect_length;
+-    int total_length;
+-    int entrysize;
+-    int header_size;
+-    int data_size;
+-    int size;
++    uint64_t Logical_length;
++    uint64_t indirect_length;
++    uint64_t total_length;
++    uint64_t entrysize;
++    uint64_t header_size;
++    uint64_t data_size;
++    uint64_t size;
+     uint64_t free_indirect;
+     uint64_t free_data;
+-    RdmaHashExt(int esize,int len,char* arr){
++    RdmaHashExt(uint64_t esize,uint64_t len,char* arr){
+ 
+       entrysize = (((esize-1)>>3)+1) <<3;
+ 
+@@ -128,13 +128,13 @@ namespace drtm {
+       return MurmurHash64A(key, 0xdeadbeef) % Logical_length;
+     }
+ 
+-    inline DataNode * getDataNode(int i){
++    inline DataNode * getDataNode(uint64_t i){
+       return (DataNode *)(array+ getDataNode_loc(i));
+     }
+-    inline uint64_t getDataNode_loc(int i){
++    inline uint64_t getDataNode_loc(uint64_t i){
+       return indirect_length * header_size +  (i-indirect_length) * data_size;
+     }
+-    inline uint64_t getHeaderNode_loc(int i){
++    inline uint64_t getHeaderNode_loc(uint64_t i){
+       return i*header_size;
+     }
+     void Insert(uint64_t key, void* val) {
+diff --git a/memstore/rdma_lib.cc b/memstore/rdma_lib.cc
+index 8c3688d..bac624f 100644
+--- a/memstore/rdma_lib.cc
++++ b/memstore/rdma_lib.cc
+@@ -101,6 +101,7 @@ dev_resources_create (struct dev_resource *res,char* buf,uint64_t size)
+       goto dev_resources_create_exit;
+     }
+   //  fprintf (stdout, "found %d device(s)\n", num_devices);
++    rdma_config.dev_name = std::string("mlx5_0").c_str();
+   /* search for the specific device we want to work with */
+   for (i = 0; i < num_devices; i++)
+     {
+@@ -256,7 +257,7 @@ QP_create(struct QP *res,struct dev_resource *dev)
+ 
+   memset (&qp_init_attr, 0, sizeof (qp_init_attr));
+   qp_init_attr.qp_type = IBV_QPT_RC;
+-  qp_init_attr.sq_sig_all = 1;
++  qp_init_attr.sq_sig_all = 0;
+   qp_init_attr.send_cq = res->cq;
+   qp_init_attr.recv_cq = res->cq;
+   qp_init_attr.cap.max_send_wr = 2;
+diff --git a/memstore/rdma_resource.h b/memstore/rdma_resource.h
+index 20ac6e7..e5ae83a 100644
+--- a/memstore/rdma_resource.h
++++ b/memstore/rdma_resource.h
+@@ -48,7 +48,7 @@
+ #include <vector>
+ 
+ #define MAX_BUFFER_COUNT 8
+-#define MAX_THREADS 16
++#define MAX_THREADS 128
+ 
+ struct config_t
+ {
+@@ -178,11 +178,13 @@ namespace  drtm {
+     void rdmaTest();
+ 
+     //RDMA address for local msgs
+-    inline char *RdmaResource::GetMsgAddr(int t_id) {
++//    inline char *RdmaResource::GetMsgAddr(int t_id) {
++      inline char *GetMsgAddr(int t_id) {
+       return (char *)( buffer + off + t_id * bufferEntrySize);
+     }
+ 
+-    inline char *RdmaResource::GetMsgAddr(int t_id,int b_id ){
++//    inline char *RdmaResource::GetMsgAddr(int t_id,int b_id ){
++      inline char *GetMsgAddr(int t_id,int b_id ){
+       assert(b_id < MAX_BUFFER_COUNT && b_id >= 0) ;
+       return (char *)(buffer + off + t_id * bufferEntrySize + b_id * bufferSize);
+     }
+diff --git a/oltp/snapsharechoptpcc.cc b/oltp/snapsharechoptpcc.cc
+index f5ae3d5..d475a9a 100755
+--- a/oltp/snapsharechoptpcc.cc
++++ b/oltp/snapsharechoptpcc.cc
+@@ -44,6 +44,7 @@
+ #include <string>
+ #include <ctype.h>
+ #include <stdlib.h>
++#include <cmath>
+ 
+ #include <malloc.h>
+ #include <time.h>
+@@ -71,6 +72,8 @@
+ 
+ #include <atomic>
+ 
++#include <glog/logging.h>
++
+ using namespace std;
+ using namespace util;
+ //using namespace leveldb;
+@@ -788,6 +791,7 @@ public:
+ 	      fprintf(stdout,"avg full thr: %f\n",full_transaction_thr / total_partition);
+ 	      fprintf(stdout,"avg neworder thr: %f\n",neworder_transaction_thr / total_partition);
+ 	      fprintf(stdout,"full thr %f\n",full_transaction_thr);
++//          fprintf(stdout,"npartitions=%d\tnthreads=%d\tscale_factor=%d\t\tfull thr  %f\n", total_partition, nthreads, (int)scale_factor, full_transaction_thr);
+ 	      fprintf(stdout,"full neworder: %f\n",neworder_transaction_thr);
+ #ifdef RATIO
+ 	      uint64_t total_cross_warehouse = 0;
+@@ -891,6 +895,15 @@ public:
+     INVARIANT(warehouse_id_start <= NumWarehouses());
+     INVARIANT(warehouse_id_end > warehouse_id_start);
+     INVARIANT(warehouse_id_end <= (NumWarehouses() + 1));
++
++    LOG_IF(ERROR, !(warehouse_id_start >= 1
++        && warehouse_id_start <= NumWarehouses()
++        && warehouse_id_end > warehouse_id_start
++        && warehouse_id_end <= (NumWarehouses() + 1)))
++            << "Warehouse id not correct, start=" << warehouse_id_start
++            << ", end=" << warehouse_id_end
++            << ", total=" << NumWarehouses();
++
+     NDB_MEMSET(&last_no_o_ids[0], 0, sizeof(last_no_o_ids));
+     if (verbose) {
+       cerr << "tpcc: worker id " << worker_id
+@@ -3552,14 +3565,40 @@ protected:
+     fprintf(stdout,"connection done\n");
+     ((tpcc_listener *)listener)->Coordinate();
+ 
++      size_t warehouse_per_thread = NumWarehousePerPartition() / nthreads;
++
+       for (size_t i = 0; i < nthreads; i++){
+-        ret.push_back(
++          int worker_start_id = 0;
++          int worker_end_id = 0;
++          if (NumWarehousePerPartition() > nthreads) {
+ //          new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+ //            current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 1,
+ //			   current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 2, store, rdma));
+-                new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+-                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + 1,
+-                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + NumWarehousePerPartition() + 1, store, rdma));
++
++//                      new tpcc_worker(blockstart + i, r.next(), db, &barrier_a, &barrier_b,
++//                                      current_partition * NumWarehousePerPartition() + i * warehouse_per_thread + 1,
++//                                      current_partition * NumWarehousePerPartition() + (i + 1) * warehouse_per_thread + 1,
++//                                      store, rdma));
++
++
++
++                worker_start_id = current_partition * NumWarehousePerPartition() + i * warehouse_per_thread + 1;
++                worker_end_id = current_partition * NumWarehousePerPartition() + (i + 1) * warehouse_per_thread + 1;
++          }
++          else {
++                worker_start_id = current_partition * NumWarehousePerPartition() + i % NumWarehousePerPartition() + 1;
++                worker_end_id = current_partition * NumWarehousePerPartition() + i % NumWarehousePerPartition() + 2;
++          }
++          LOG(INFO) << "new tpcc_worker, partition id="<< current_partition
++                    << ", worker id=" << i
++                    << ", warehouse_per_partition=" << NumWarehousePerPartition()
++                    << ", start worker id=" << worker_start_id
++                    << ", end worker id=" << worker_end_id;
++
++          ret.push_back(
++                  new tpcc_worker(blockstart + i, r.next(), db, &barrier_a, &barrier_b,
++                                  worker_start_id, worker_end_id, store, rdma));
++
+       }
+     ret.push_back(listener);
+     return ret;

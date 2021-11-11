@@ -1,0 +1,44 @@
+diff --git a/oltp/snapsharechoptpcc.cc b/oltp/snapsharechoptpcc.cc
+index f5ae3d5..7be6f0b 100755
+--- a/oltp/snapsharechoptpcc.cc
++++ b/oltp/snapsharechoptpcc.cc
+@@ -787,7 +787,8 @@ public:
+ 	      //current partition will server as the master
+ 	      fprintf(stdout,"avg full thr: %f\n",full_transaction_thr / total_partition);
+ 	      fprintf(stdout,"avg neworder thr: %f\n",neworder_transaction_thr / total_partition);
+-	      fprintf(stdout,"full thr %f\n",full_transaction_thr);
++//	      fprintf(stdout,"full thr %f\n",full_transaction_thr);
++          fprintf(stdout,"npartitions=%d\tnthreads=%d\tscale_factor=%d\t\tfull thr  %f\n", total_partition, nthreads, (int)scale_factor, full_transaction_thr);
+ 	      fprintf(stdout,"full neworder: %f\n",neworder_transaction_thr);
+ #ifdef RATIO
+ 	      uint64_t total_cross_warehouse = 0;
+@@ -3552,14 +3553,27 @@ protected:
+     fprintf(stdout,"connection done\n");
+     ((tpcc_listener *)listener)->Coordinate();
+ 
++      size_t warehouse_per_thread = NumWarehousePerPartition() / nthreads;
++
+       for (size_t i = 0; i < nthreads; i++){
++          if (NumWarehousePerPartition() > nthreads)
+         ret.push_back(
+ //          new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+ //            current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 1,
+ //			   current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 2, store, rdma));
+                 new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
+-                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + 1,
+-                                 current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + NumWarehousePerPartition() + 1, store, rdma));
++                                 current_partition*NumWarehousePerPartition() + i * warehouse_per_thread + 1,
++                                 current_partition*NumWarehousePerPartition() + (i + 1) * warehouse_per_thread + 1, store, rdma));
++          else
++              ret.push_back(
++                new tpcc_worker( blockstart + i,r.next(), db, &barrier_a, &barrier_b,
++                                current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 1,
++			                    current_partition*NumWarehousePerPartition()+ i % NumWarehousePerPartition() + 2, store, rdma));
++
++
++        printf("new tpcc_worker, partition id=%d, worker id=%d, #WarehousePerPartition=%d, start id=%d, end id=%d\n", current_partition, i, NumWarehousePerPartition(),
++               current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + 1,
++               current_partition*NumWarehousePerPartition() + i % NumWarehousePerPartition() + NumWarehousePerPartition() + 1);
+       }
+     ret.push_back(listener);
+     return ret;
